@@ -1,61 +1,60 @@
 #!/usr/bin/env python3
 """
 NSW Planning Portal PBSA DA Fetcher
-Runs daily via GitHub Actions. Fetches all DAs, filters for PBSA,
-upserts to Supabase, tracks status changes, and sets alert flags.
+Uses the DAApplicationTracker API (the real public endpoint).
+Fetches DAs in monthly chunks, filters for PBSA types, upserts to Supabase.
 """
 
 import os
-import re
 import time
 import logging
 import requests
 from datetime import date, datetime, timedelta
-from typing import Optional
+from dateutil.relativedelta import relativedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-API_BASE      = "https://api.apps1.nsw.gov.au/eplanning/data/v0/OnlineDA"
-PAGE_SIZE     = 500
-SUPABASE_URL  = os.environ["SUPABASE_URL"]       # set in GitHub Actions secrets
-SUPABASE_KEY  = os.environ["SUPABASE_KEY"]       # service_role key
+API_URL      = "https://api.apps1.nsw.gov.au/eplanning/data/v0/DAApplicationTracker"
+PAGE_SIZE    = 500
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
-# PBSA keyword matching — ordered by confidence
-PBSA_HIGH = [
-    r"purpose.built student accommodation",
-    r"\bPBSA\b",
-    r"student accommodation",
-    r"student housing",
-    r"student residence",
-    r"student residential",
-]
-PBSA_MEDIUM = [
-    r"boarding house",
-    r"co-living",
-    r"coliving",
-    r"managed student",
-    r"university accommodation",
-    r"tertiary accommodation",
-    r"student apartment",
-]
-PBSA_LOW = [
-    r"serviced apartment",
-    r"micro.apartment",
-    r"micro apartment",
-    r"build.to.rent",
+# PBSA development types to capture (matches TYPE_OF_DEVELOPMENT field)
+PBSA_HIGH_TYPES = {
+    "boarding house",
+    "co-living",
+    "co-living housing",
+    "hostel",
+}
+
+PBSA_MEDIUM_TYPES = {
+    "serviced apartment",
+    "build-to-rent",
+}
+
+# Additional keyword search in dev type for student/PBSA references
+PBSA_KEYWORDS = [
+    "student",
+    "pbsa",
+    "iglu",
+    "scape",
+    "unilodge",
+    "urbanest",
+    "uts:",
+    "usyd",
+    "unsw",
 ]
 
 # Alert thresholds (days)
-STALL_INFO_DAYS        = 30
-STALL_ASSESSMENT_DAYS  = 90
-LONG_EXHIBITING_DAYS   = 60
-NO_UPDATE_DAYS         = 60
-MIN_COST_PBSA_INFER    = 5_000_000   # $5M+ commercial/residential flagged as LOW
+STALL_INFO_DAYS       = 30
+STALL_ASSESSMENT_DAYS = 90
+LONG_EXHIBITING_DAYS  = 60
+NO_UPDATE_DAYS        = 60
 
-# ── Supabase client helpers ───────────────────────────────────────────────────
+# ── Supabase helpers ──────────────────────────────────────────────────────────
 
 def sb_headers():
     return {
@@ -65,7 +64,7 @@ def sb_headers():
         "Prefer": "return=representation",
     }
 
-def sb_get(table: str, params: dict = None):
+def sb_get(table, params=None):
     r = requests.get(
         f"{SUPABASE_URL}/rest/v1/{table}",
         headers=sb_headers(),
@@ -75,12 +74,12 @@ def sb_get(table: str, params: dict = None):
     r.raise_for_status()
     return r.json()
 
-def sb_upsert(table: str, records: list, on_conflict: str):
+def sb_upsert(table, records, on_conflict):
     if not records:
         return []
     r = requests.post(
         f"{SUPABASE_URL}/rest/v1/{table}",
-        headers={**sb_headers(), "Prefer": f"resolution=merge-duplicates,return=representation"},
+        headers={**sb_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
         params={"on_conflict": on_conflict},
         json=records,
         timeout=60,
@@ -88,7 +87,7 @@ def sb_upsert(table: str, records: list, on_conflict: str):
     r.raise_for_status()
     return r.json()
 
-def sb_insert(table: str, records: list):
+def sb_insert(table, records):
     if not records:
         return []
     r = requests.post(
@@ -102,113 +101,152 @@ def sb_insert(table: str, records: list):
 
 # ── NSW Planning Portal API ───────────────────────────────────────────────────
 
-def fetch_page(page_number: int, lodgement_from: str, lodgement_to: str) -> dict:
-    """Fetch one page of DAs from the NSW Planning Portal open data API."""
-    params = {
-        "pageSize": PAGE_SIZE,
-        "pageNumber": page_number,
-        "filters": (
-            f'{{"LodgementDateFrom":"{lodgement_from}",'
-            f'"LodgementDateTo":"{lodgement_to}"}}'
-        ),
-    }
-    for attempt in range(3):
-        try:
-            r = requests.get(API_BASE, params=params, timeout=60)
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            log.warning(f"Page {page_number} attempt {attempt+1} failed: {e}")
-            time.sleep(5 * (attempt + 1))
-    raise RuntimeError(f"Failed to fetch page {page_number} after 3 attempts")
+def fetch_month(year, month):
+    """Fetch all DAs for a given month, paginating through results."""
+    from_date = f"{year}-{month:02d}-01"
+    # Last day of month
+    first_of_next = date(year, month, 1) + relativedelta(months=1)
+    to_date = (first_of_next - timedelta(days=1)).isoformat()
 
-
-def fetch_all_das(days_back: int = 7) -> list[dict]:
-    """
-    Fetch DAs updated in the last N days.
-    On first run (FULL_SYNC=true env var), fetches from 2019-01-01.
-    """
-    full_sync = os.environ.get("FULL_SYNC", "false").lower() == "true"
-    if full_sync:
-        lodgement_from = "2019-01-01"
-        log.info("FULL SYNC mode — fetching from 2019-01-01")
-    else:
-        lodgement_from = (date.today() - timedelta(days=days_back)).isoformat()
-
-    lodgement_to = date.today().isoformat()
-    log.info(f"Fetching DAs lodged {lodgement_from} → {lodgement_to}")
-
-    all_das = []
+    log.info(f"  Fetching {from_date} → {to_date}")
+    
+    all_records = []
     page = 1
+    
     while True:
-        data = fetch_page(page, lodgement_from, lodgement_to)
-
-        # Handle API response structure variations
-        records = data if isinstance(data, list) else data.get("Application", data.get("applications", []))
-        if not records:
+        payload = {
+            "PageNumber": page,
+            "PageSize": PAGE_SIZE,
+            "ApplicationStatus": "ALL",
+            "LodgementDateFrom": from_date,
+            "LodgementDateTo": to_date,
+        }
+        
+        for attempt in range(3):
+            try:
+                r = requests.post(API_URL, json=payload, timeout=60)
+                r.raise_for_status()
+                data = r.json()
+                break
+            except Exception as e:
+                log.warning(f"    Page {page} attempt {attempt+1} failed: {e}")
+                time.sleep(5 * (attempt + 1))
+        else:
+            log.error(f"    Failed page {page} after 3 attempts, skipping")
             break
 
-        all_das.extend(records)
-        log.info(f"Page {page}: {len(records)} records (total so far: {len(all_das)})")
-
-        if len(records) < PAGE_SIZE:
+        features = data.get("features", [])
+        
+        # Filter for PBSA on this page
+        pbsa = filter_pbsa(features)
+        all_records.extend(pbsa)
+        
+        total_pages = data.get("TotalPages", 1)
+        if page >= total_pages:
             break
+        
         page += 1
-        time.sleep(0.5)  # be polite
+        time.sleep(0.3)
+    
+    return all_records
 
-    log.info(f"Total DAs fetched: {len(all_das)}")
-    return all_das
 
-# ── PBSA Detection ────────────────────────────────────────────────────────────
+def filter_pbsa(features):
+    """Filter features for PBSA development types."""
+    results = []
+    for f in features:
+        p = f.get("properties", {})
+        dev_types_raw = (p.get("TYPE_OF_DEVELOPMENT") or "").lower()
+        dev_types = [t.strip() for t in dev_types_raw.split(",")]
+        
+        confidence = None
+        reason = None
+        
+        # Check high confidence types
+        for dt in dev_types:
+            if dt in PBSA_HIGH_TYPES:
+                confidence = "HIGH"
+                reason = f"dev type: {dt}"
+                break
+        
+        # Check medium confidence types
+        if not confidence:
+            for dt in dev_types:
+                if dt in PBSA_MEDIUM_TYPES:
+                    confidence = "MEDIUM"
+                    reason = f"dev type: {dt}"
+                    break
+        
+        # Check keyword matches
+        if not confidence:
+            for kw in PBSA_KEYWORDS:
+                if kw in dev_types_raw:
+                    confidence = "MEDIUM"
+                    reason = f"keyword: {kw}"
+                    break
+        
+        if confidence:
+            results.append({
+                "raw": p,
+                "confidence": confidence,
+                "reason": reason,
+                "coords": f.get("geometry", {}).get("coordinates", [None, None]),
+            })
+    
+    return results
 
-def pbsa_confidence(da: dict) -> tuple[Optional[str], Optional[str]]:
-    """
-    Returns (confidence_level, match_reason) or (None, None) if not PBSA.
-    Checks development_type, description, and cost/category inference.
-    """
-    # Fields to search
-    searchable = " ".join(filter(None, [
-        da.get("DevelopmentType", ""),
-        da.get("DevelopmentDescription", ""),
-        da.get("ApplicationDescription", ""),
-    ])).lower()
 
-    for pattern in PBSA_HIGH:
-        if re.search(pattern, searchable, re.IGNORECASE):
-            return "HIGH", f"keyword match: {pattern}"
+# ── Record mapping ────────────────────────────────────────────────────────────
 
-    for pattern in PBSA_MEDIUM:
-        if re.search(pattern, searchable, re.IGNORECASE):
-            return "MEDIUM", f"keyword match: {pattern}"
+def parse_date(val):
+    if not val:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(str(val), fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
-    for pattern in PBSA_LOW:
-        if re.search(pattern, searchable, re.IGNORECASE):
-            return "LOW", f"keyword match: {pattern}"
 
-    # Inference: large commercial/residential development with no other strong signal
-    try:
-        cost = float(da.get("CostOfDevelopment", 0) or 0)
-        category = da.get("DevelopmentCategory", "").lower()
-        dev_type = da.get("DevelopmentType", "").lower()
-        if (cost >= MIN_COST_PBSA_INFER
-                and category in ("commercial", "residential")
-                and any(k in dev_type for k in ("residential flat", "mixed use", "multi dwelling"))):
-            return "LOW", f"inferred: ${cost:,.0f} {category} development"
-    except (ValueError, TypeError):
-        pass
+def map_record(item):
+    p = item["raw"]
+    coords = item["coords"]
+    pan = (p.get("PLANNING_PORTAL_APP_NUMBER") or "").strip()
+    status = p.get("STATUS") or ""
+    lodgement = parse_date(p.get("LODGEMENT_DATE"))
+    
+    days_in_status = None
+    if lodgement:
+        try:
+            days_in_status = (date.today() - date.fromisoformat(lodgement)).days
+        except Exception:
+            pass
 
-    return None, None
+    return {
+        "planning_portal_number": pan,
+        "council_name":           p.get("COUNCIL_NAME"),
+        "application_status":     status,
+        "application_type":       p.get("APPLICATION_TYPE"),
+        "development_type":       p.get("TYPE_OF_DEVELOPMENT"),
+        "full_address":           p.get("FULL_ADDRESS"),
+        "lodgement_date":         lodgement,
+        "determination_date":     parse_date(p.get("DETERMINATION_DATE")),
+        "longitude":              coords[0] if coords else None,
+        "latitude":               coords[1] if coords else None,
+        "pbsa_confidence":        item["confidence"],
+        "pbsa_match_reason":      item["reason"],
+        "last_updated_at":        datetime.utcnow().isoformat(),
+        "last_api_seen_at":       datetime.utcnow().isoformat(),
+        "days_in_current_status": days_in_status,
+        "alert_flags":            [],
+    }
 
-# ── Alert Flag Logic ──────────────────────────────────────────────────────────
 
-def compute_flags(record: dict, existing_record: Optional[dict] = None) -> list[str]:
-    """Compute alert flags for a DA record."""
+def compute_flags(rec, existing=None):
     flags = []
-    status = record.get("application_status", "")
-    today = date.today()
-
-    # Days in current status
-    days = record.get("days_in_current_status", 0) or 0
+    status = rec.get("application_status", "")
+    days = rec.get("days_in_current_status") or 0
 
     if status == "Additional Information Requested" and days >= STALL_INFO_DAYS:
         flags.append("STALLED_INFO")
@@ -216,7 +254,7 @@ def compute_flags(record: dict, existing_record: Optional[dict] = None) -> list[
         flags.append("STALLED_ASSESSMENT")
     if status == "On Exhibition" and days >= LONG_EXHIBITING_DAYS:
         flags.append("LONG_EXHIBITING")
-    if status == "Rejected":
+    if status in ("Rejected", "Refused", "Declined"):
         flags.append("REJECTED")
     if status == "Withdrawn":
         flags.append("WITHDRAWN")
@@ -225,180 +263,114 @@ def compute_flags(record: dict, existing_record: Optional[dict] = None) -> list[
     if status == "Deferred Commencement":
         flags.append("DEFERRED")
 
-    # No API update recently (but still active)
-    if existing_record and status not in ("Determined", "Rejected", "Withdrawn"):
-        last_seen = existing_record.get("last_api_seen_at")
+    if existing and status not in ("Determined", "Rejected", "Withdrawn", "Approved"):
+        last_seen = existing.get("last_api_seen_at")
         if last_seen:
             try:
-                last_seen_date = datetime.fromisoformat(last_seen.replace("Z", "+00:00")).date()
-                if (today - last_seen_date).days >= NO_UPDATE_DAYS:
+                last_date = datetime.fromisoformat(last_seen.replace("Z", "+00:00")).date()
+                if (date.today() - last_date).days >= NO_UPDATE_DAYS:
                     flags.append("NO_UPDATE")
             except Exception:
                 pass
 
     return flags
 
-# ── Record Mapping ────────────────────────────────────────────────────────────
-
-def parse_date(val) -> Optional[str]:
-    if not val:
-        return None
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(str(val), fmt).date().isoformat()
-        except ValueError:
-            continue
-    return None
-
-def parse_bool(val) -> Optional[bool]:
-    if val is None:
-        return None
-    if isinstance(val, bool):
-        return val
-    return str(val).strip().upper() in ("Y", "YES", "TRUE", "1")
-
-def map_da(raw: dict, confidence: str, reason: str) -> dict:
-    """Map raw API record to our DB schema."""
-    lodgement = parse_date(raw.get("LodgementDate"))
-    determination = parse_date(raw.get("DeterminationDate"))
-    status = raw.get("ApplicationStatus", "")
-
-    # Days in current status (rough estimate from lodgement if no better data)
-    days_in_status = None
-    try:
-        ref_date_str = lodgement
-        if ref_date_str:
-            ref = date.fromisoformat(ref_date_str)
-            days_in_status = (date.today() - ref).days
-    except Exception:
-        pass
-
-    return {
-        "planning_portal_number":    raw.get("PlanningPortalApplicationNumber", "").strip(),
-        "council_application_number": raw.get("CouncilApplicationNumber"),
-        "council_name":              raw.get("CouncilName"),
-        "application_type":          raw.get("ApplicationType"),
-        "application_status":        status,
-        "development_type":          raw.get("DevelopmentType"),
-        "development_category":      raw.get("DevelopmentCategory"),
-        "development_description":   raw.get("DevelopmentDescription") or raw.get("ApplicationDescription"),
-        "full_address":              raw.get("FullAddress"),
-        "suburb":                    raw.get("Suburb"),
-        "postcode":                  raw.get("Postcode"),
-        "street_name":               raw.get("StreetName"),
-        "street_number":             raw.get("StreetNumber1"),
-        "lot":                       raw.get("Lot"),
-        "plan_label":                raw.get("PlanLabel"),
-        "cost_of_development":       raw.get("CostOfDevelopment"),
-        "number_of_new_dwellings":   raw.get("NumberOfNewDwellings"),
-        "number_of_storeys":         raw.get("NumberOfStoreys"),
-        "lodgement_date":            lodgement,
-        "determination_date":        determination,
-        "determination_authority":   raw.get("DeterminationAuthority"),
-        "exhibition_start_date":     parse_date(raw.get("AssessmentExhibitionStartDate")),
-        "exhibition_end_date":       parse_date(raw.get("AssessmentExhibitionEndDate")),
-        "epi_variation_proposed":    parse_bool(raw.get("EPIVariationProposedFlag")),
-        "epi_variation_approved":    parse_bool(raw.get("VariationToDevelopmentStandardsApprovedFlag")),
-        "accompanied_by_vpa":        parse_bool(raw.get("AccompaniedByVPAFlag")),
-        "vpa_status":                raw.get("VPAStatus"),
-        "subdivision_proposed":      parse_bool(raw.get("SubdivisionProposedFlag")),
-        "longitude":                 raw.get("X"),
-        "latitude":                  raw.get("Y"),
-        "pbsa_confidence":           confidence,
-        "pbsa_match_reason":         reason,
-        "last_updated_at":           datetime.utcnow().isoformat(),
-        "last_api_seen_at":          datetime.utcnow().isoformat(),
-        "days_in_current_status":    days_in_status,
-        "alert_flags":               [],   # computed after upsert
-    }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     log.info("=== PBSA DA Fetcher starting ===")
 
-    # 1. Fetch from API
-    raw_das = fetch_all_das(days_back=int(os.environ.get("DAYS_BACK", "14")))
+    full_sync = os.environ.get("FULL_SYNC", "false").lower() == "true"
+    days_back = int(os.environ.get("DAYS_BACK", "14"))
 
-    # 2. Filter for PBSA
-    pbsa_records = []
-    for raw in raw_das:
-        pan = (raw.get("PlanningPortalApplicationNumber") or "").strip()
-        if not pan:
-            continue
-        confidence, reason = pbsa_confidence(raw)
-        if not confidence:
-            continue
-        pbsa_records.append(map_da(raw, confidence, reason))
+    if full_sync:
+        start_date = date(2019, 1, 1)
+        log.info("FULL SYNC: fetching from 2019-01-01")
+    else:
+        start_date = date.today() - timedelta(days=days_back)
+        log.info(f"INCREMENTAL: fetching from {start_date}")
 
-    log.info(f"PBSA DAs identified: {len(pbsa_records)}")
-    if not pbsa_records:
-        log.info("Nothing to upsert. Done.")
+    # Build list of (year, month) tuples to fetch
+    months = []
+    current = date(start_date.year, start_date.month, 1)
+    today = date.today()
+    while current <= today:
+        months.append((current.year, current.month))
+        current += relativedelta(months=1)
+
+    log.info(f"Fetching {len(months)} month(s)")
+
+    all_pbsa = []
+    for year, month in months:
+        items = fetch_month(year, month)
+        log.info(f"  {year}-{month:02d}: {len(items)} PBSA DAs found")
+        all_pbsa.extend(items)
+
+    log.info(f"Total PBSA DAs found: {len(all_pbsa)}")
+    if not all_pbsa:
+        log.info("Nothing to upsert.")
         return
 
-    # 3. Fetch existing records from Supabase to detect status changes
-    pans = [r["planning_portal_number"] for r in pbsa_records]
-    # Supabase REST: filter by IN list
+    # Deduplicate by PAN (keep last occurrence)
+    seen = {}
+    for item in all_pbsa:
+        pan = (item["raw"].get("PLANNING_PORTAL_APP_NUMBER") or "").strip()
+        if pan:
+            seen[pan] = item
+    all_pbsa = list(seen.values())
+    log.info(f"After dedup: {len(all_pbsa)} unique DAs")
+
+    # Map to DB records
+    records = [map_record(item) for item in all_pbsa]
+    records = [r for r in records if r["planning_portal_number"]]
+
+    # Fetch existing records for status change detection
+    pans = [r["planning_portal_number"] for r in records]
     existing = {}
     chunk_size = 100
     for i in range(0, len(pans), chunk_size):
         chunk = pans[i:i+chunk_size]
         in_clause = "(" + ",".join(f'"{p}"' for p in chunk) + ")"
-        rows = sb_get(
-            "development_applications",
-            params={"planning_portal_number": f"in.{in_clause}",
-                    "select": "planning_portal_number,application_status,last_api_seen_at"}
-        )
+        rows = sb_get("development_applications", {
+            "planning_portal_number": f"in.{in_clause}",
+            "select": "planning_portal_number,application_status,last_api_seen_at",
+        })
         for row in rows:
             existing[row["planning_portal_number"]] = row
 
-    # 4. Detect status changes → write to history
-    history_inserts = []
-    for rec in pbsa_records:
+    # Detect status changes
+    history = []
+    for rec in records:
         pan = rec["planning_portal_number"]
         old = existing.get(pan)
         if old and old["application_status"] != rec["application_status"]:
-            # Calculate days in old status
-            old_seen = old.get("last_api_seen_at")
-            days_in_old = None
-            if old_seen:
-                try:
-                    old_date = datetime.fromisoformat(old_seen.replace("Z", "+00:00")).date()
-                    days_in_old = (date.today() - old_date).days
-                except Exception:
-                    pass
-            history_inserts.append({
+            history.append({
                 "pan": pan,
                 "old_status": old["application_status"],
                 "new_status": rec["application_status"],
-                "days_in_old_status": days_in_old,
             })
             log.info(f"Status change: {pan} {old['application_status']} → {rec['application_status']}")
 
-    if history_inserts:
-        sb_insert("status_history", history_inserts)
-        log.info(f"Recorded {len(history_inserts)} status changes")
+    if history:
+        sb_insert("status_history", history)
+        log.info(f"Recorded {len(history)} status changes")
 
-    # 5. Compute alert flags (needs existing record for NO_UPDATE check)
-    for rec in pbsa_records:
-        pan = rec["planning_portal_number"]
-        rec["alert_flags"] = compute_flags(rec, existing.get(pan))
+    # Compute alert flags
+    for rec in records:
+        rec["alert_flags"] = compute_flags(rec, existing.get(rec["planning_portal_number"]))
 
-    # 6. Upsert to Supabase
-    chunk_size = 200
-    total_upserted = 0
-    for i in range(0, len(pbsa_records), chunk_size):
-        chunk = pbsa_records[i:i+chunk_size]
+    # Upsert in chunks
+    total = 0
+    for i in range(0, len(records), 200):
+        chunk = records[i:i+200]
         sb_upsert("development_applications", chunk, "planning_portal_number")
-        total_upserted += len(chunk)
-        log.info(f"Upserted {total_upserted}/{len(pbsa_records)}")
+        total += len(chunk)
+        log.info(f"Upserted {total}/{len(records)}")
 
-    log.info("=== Done ===")
-    log.info(f"Summary: {len(pbsa_records)} PBSA DAs | {len(history_inserts)} status changes")
-
-    # Print alert summary
-    flagged = [r for r in pbsa_records if r["alert_flags"]]
-    log.info(f"DAs with active alerts: {len(flagged)}")
+    # Summary
+    flagged = [r for r in records if r["alert_flags"]]
+    log.info(f"=== Done: {len(records)} DAs upserted, {len(history)} status changes, {len(flagged)} with alerts ===")
     for r in flagged[:10]:
         log.info(f"  {r['planning_portal_number']} | {r['application_status']} | {r['alert_flags']} | {r['full_address']}")
 
