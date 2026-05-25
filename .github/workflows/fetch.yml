@@ -1,0 +1,36 @@
+name: Fetch PBSA DAs
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+    inputs:
+      full_sync:
+        description: "Full sync from 2019? (true/false)"
+        required: false
+        default: "false"
+      days_back:
+        description: "Days back to fetch (default 14)"
+        required: false
+        default: "14"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run fetcher
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FULL_SYNC: ${{ github.event.inputs.full_sync || 'false' }}
+          DAYS_BACK: ${{ github.event.inputs.days_back || '14' }}
+        run: python fetcher/fetch.py
