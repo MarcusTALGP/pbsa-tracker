@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PBSA DA Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0b0e;
+    --surface:   #111318;
+    --border:    #1e2128;
+    --border2:   #2a2f3a;
+    --text:      #e8eaf0;
+    --muted:     #6b7280;
+    --accent:    #4ade80;
+    --accent2:   #22d3ee;
+    --warn:      #fb923c;
+    --crit:      #f87171;
+    --mono:      'DM Mono', monospace;
+    --sans:      'Syne', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: var(--sans);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: -0.5px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  .header-meta {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat {
+    padding: 16px 24px;
+    border-right: 1px solid var(--border);
+  }
+
+  .stat:last-child { border-right: none; }
+
+  .stat-value {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 28px;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-label {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .stat.crit .stat-value { color: var(--crit); }
+  .stat.warn .stat-value { color: var(--warn); }
+  .stat.ok   .stat-value { color: var(--accent); }
+
+  /* ── Filters ── */
+  .filters {
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .filters label {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-right: 4px;
+  }
+
+  select, input[type="text"] {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  select:focus, input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn {
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.active { border-color: var(--accent); color: var(--accent); background: rgba(74,222,128,0.08); }
+
+  /* ── Table ── */
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    background: var(--surface);
+    padding: 10px 16px;
+    text-align: left;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  thead th:hover { color: var(--text); }
+  thead th.sort-asc::after  { content: " ↑"; color: var(--accent); }
+  thead th.sort-desc::after { content: " ↓"; color: var(--accent); }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+    cursor: pointer;
+  }
+
+  tbody tr:hover { background: var(--surface); }
+
+  td {
+    padding: 10px 16px;
+    vertical-align: middle;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  td.wrap {
+    white-space: normal;
+    max-width: 260px;
+    line-height: 1.4;
+  }
+
+  /* ── Alert badges ── */
+  .flag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin: 1px 1px;
+    white-space: nowrap;
+  }
+
+  .flag-STALLED_INFO      { background: rgba(248,113,113,0.15); color: var(--crit); border: 1px solid rgba(248,113,113,0.3); }
+  .flag-REJECTED          { background: rgba(248,113,113,0.15); color: var(--crit); border: 1px solid rgba(248,113,113,0.3); }
+  .flag-COURT_APPEAL      { background: rgba(248,113,113,0.15); color: var(--crit); border: 1px solid rgba(248,113,113,0.3); }
+  .flag-STALLED_ASSESSMENT{ background: rgba(251,146,60,0.15);  color: var(--warn); border: 1px solid rgba(251,146,60,0.3); }
+  .flag-LONG_EXHIBITING   { background: rgba(251,146,60,0.15);  color: var(--warn); border: 1px solid rgba(251,146,60,0.3); }
+  .flag-WITHDRAWN         { background: rgba(251,146,60,0.15);  color: var(--warn); border: 1px solid rgba(251,146,60,0.3); }
+  .flag-DEFERRED          { background: rgba(251,146,60,0.15);  color: var(--warn); border: 1px solid rgba(251,146,60,0.3); }
+  .flag-NO_UPDATE         { background: rgba(107,114,128,0.15); color: var(--muted); border: 1px solid rgba(107,114,128,0.3); }
+
+  /* ── Confidence ── */
+  .conf {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+  .conf-HIGH   { background: rgba(74,222,128,0.12); color: var(--accent); }
+  .conf-MEDIUM { background: rgba(34,211,238,0.12); color: var(--accent2); }
+  .conf-LOW    { background: rgba(107,114,128,0.12); color: var(--muted); }
+
+  /* ── Status pill ── */
+  .status-pill {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .status-Determined           { background: rgba(74,222,128,0.1);  color: var(--accent); }
+  .status-Under-Assessment     { background: rgba(34,211,238,0.1);  color: var(--accent2); }
+  .status-On-Exhibition        { background: rgba(251,146,60,0.1);  color: var(--warn); }
+  .status-Additional-Info      { background: rgba(248,113,113,0.1); color: var(--crit); }
+  .status-Rejected             { background: rgba(248,113,113,0.15);color: var(--crit); }
+  .status-Withdrawn            { background: rgba(107,114,128,0.1); color: var(--muted); }
+  .status-Pending-Court        { background: rgba(248,113,113,0.2); color: var(--crit); }
+  .status-other                { background: rgba(107,114,128,0.1); color: var(--muted); }
+
+  /* ── Side panel ── */
+  .panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 200;
+    display: none;
+    backdrop-filter: blur(2px);
+  }
+
+  .panel-overlay.open { display: block; }
+
+  .panel {
+    position: fixed;
+    right: 0; top: 0; bottom: 0;
+    width: min(520px, 100vw);
+    background: var(--surface);
+    border-left: 1px solid var(--border2);
+    overflow-y: auto;
+    padding: 28px;
+    transform: translateX(100%);
+    transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+    z-index: 201;
+  }
+
+  .panel.open { transform: translateX(0); }
+
+  .panel-close {
+    position: absolute;
+    top: 20px; right: 20px;
+    background: transparent;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    font-size: 16px;
+    width: 32px; height: 32px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .panel-close:hover { border-color: var(--crit); color: var(--crit); }
+
+  .panel-pan {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .panel-address {
+    font-family: var(--sans);
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+
+  .panel-council {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 20px;
+  }
+
+  .panel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .panel-field {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+
+  .panel-field-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .panel-field-value {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .panel-section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    margin: 20px 0 12px;
+  }
+
+  .history-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+
+  .history-date { color: var(--muted); white-space: nowrap; min-width: 90px; }
+
+  .history-change {
+    flex: 1;
+    line-height: 1.5;
+  }
+
+  .panel-desc {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+
+  .panel-link {
+    display: block;
+    margin-top: 16px;
+    color: var(--accent);
+    font-size: 12px;
+    text-decoration: none;
+  }
+  .panel-link:hover { text-decoration: underline; }
+
+  .notes-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 10px;
+    border-radius: 4px;
+    resize: vertical;
+    min-height: 80px;
+    margin-top: 8px;
+  }
+
+  .watchlist-btn {
+    margin-top: 12px;
+    width: 100%;
+    padding: 10px;
+    background: rgba(74,222,128,0.1);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .watchlist-btn:hover { background: rgba(74,222,128,0.2); }
+  .watchlist-btn.on-watchlist { background: rgba(74,222,128,0.2); }
+
+  /* ── Loading / error ── */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--muted);
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .spinner {
+    width: 24px; height: 24px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty {
+    text-align: center;
+    padding: 60px;
+    color: var(--muted);
+  }
+
+  .empty strong { display: block; font-family: var(--sans); font-size: 18px; color: var(--text); margin-bottom: 8px; }
+
+  /* Config banner */
+  .config-banner {
+    background: rgba(251,146,60,0.1);
+    border: 1px solid rgba(251,146,60,0.3);
+    border-radius: 6px;
+    margin: 20px 32px;
+    padding: 16px 20px;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .config-banner strong { color: var(--warn); }
+  .config-banner code {
+    background: var(--bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    PBSA DA TRACKER
+  </div>
+  <div class="header-meta" id="last-updated">Loading…</div>
+</header>
+
+<!-- Config warning shown until credentials are set -->
+<div class="config-banner" id="config-banner" style="display:none">
+  <strong>⚠ Setup required.</strong> Open this file and set your Supabase credentials at the top of the &lt;script&gt; tag:
+  <br><code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> — both found in your Supabase project under Settings → API.
+</div>
+
+<div class="stats-bar">
+  <div class="stat crit"><div class="stat-value" id="s-critical">—</div><div class="stat-label">Critical alerts</div></div>
+  <div class="stat warn"><div class="stat-value" id="s-warning">—</div><div class="stat-label">Warning alerts</div></div>
+  <div class="stat"><div class="stat-value" id="s-total">—</div><div class="stat-label">Total PBSA DAs</div></div>
+  <div class="stat ok"><div class="stat-value" id="s-active">—</div><div class="stat-label">Active (not determined)</div></div>
+  <div class="stat"><div class="stat-value" id="s-watchlist">—</div><div class="stat-label">On watchlist</div></div>
+  <div class="stat"><div class="stat-value" id="s-value">—</div><div class="stat-label">Total dev value ($B)</div></div>
+</div>
+
+<div class="filters">
+  <div class="filter-group">
+    <label>Status</label>
+    <select id="f-status">
+      <option value="">All statuses</option>
+      <option>Under Assessment</option>
+      <option>Additional Information Requested</option>
+      <option>On Exhibition</option>
+      <option>Determined</option>
+      <option>Rejected</option>
+      <option>Withdrawn</option>
+      <option>Pending Court Appeal</option>
+      <option>Deferred Commencement</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Confidence</label>
+    <select id="f-confidence">
+      <option value="">All</option>
+      <option>HIGH</option>
+      <option>MEDIUM</option>
+      <option>LOW</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Council</label>
+    <select id="f-council"><option value="">All councils</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Alert</label>
+    <select id="f-flag">
+      <option value="">Any</option>
+      <option value="STALLED_INFO">Stalled – Info Req.</option>
+      <option value="STALLED_ASSESSMENT">Stalled – Assessment</option>
+      <option value="LONG_EXHIBITING">Long Exhibition</option>
+      <option value="REJECTED">Rejected</option>
+      <option value="WITHDRAWN">Withdrawn</option>
+      <option value="COURT_APPEAL">Court Appeal</option>
+      <option value="NO_UPDATE">No Recent Update</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Search</label>
+    <input type="text" id="f-search" placeholder="address, PAN, council…" style="width:200px">
+  </div>
+  <button class="btn" id="f-watchlist-only">★ Watchlist only</button>
+  <button class="btn" id="f-alerts-only">⚡ Alerts only</button>
+  <button class="btn" id="btn-refresh" onclick="loadData()">↻ Refresh</button>
+</div>
+
+<div class="table-wrap">
+  <div id="loading" class="loading"><div class="spinner"></div><span>Loading DA data…</span></div>
+  <table id="table" style="display:none">
+    <thead>
+      <tr>
+        <th data-col="planning_portal_number">PAN</th>
+        <th data-col="full_address">Address</th>
+        <th data-col="council_name">Council</th>
+        <th data-col="application_status">Status</th>
+        <th data-col="alert_flags">Alerts</th>
+        <th data-col="pbsa_confidence">PBSA</th>
+        <th data-col="cost_of_development">Dev. Cost</th>
+        <th data-col="number_of_storeys">Storeys</th>
+        <th data-col="lodgement_date">Lodged</th>
+        <th data-col="days_in_current_status">Days in status</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div id="empty" class="empty" style="display:none">
+    <strong>No results</strong>
+    Try adjusting your filters, or run a full sync if the database is empty.
+  </div>
+</div>
+
+<!-- Side panel -->
+<div class="panel-overlay" id="overlay" onclick="closePanel()"></div>
+<div class="panel" id="panel">
+  <button class="panel-close" onclick="closePanel()">✕</button>
+  <div id="panel-content"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  CONFIGURE THESE TWO VALUES
+//  Find them in Supabase → Settings → API
+// ═══════════════════════════════════════════════
+const SUPABASE_URL      = "https://affuknzwjjxuenwcteyf.supabase.co";       // e.g. https://abcdefgh.supabase.co
+const SUPABASE_ANON_KEY = "sb_publishable_qR9jz-0qf37CxKPfnIlqaQ_r0okBfPJ";  // public anon key (safe to expose)
+// ═══════════════════════════════════════════════
+
+const FLAG_LABELS = {
+  STALLED_INFO:       "Stalled: Info Req.",
+  STALLED_ASSESSMENT: "Stalled: Assessment",
+  LONG_EXHIBITING:    "Long Exhibition",
+  REJECTED:           "Rejected",
+  WITHDRAWN:          "Withdrawn",
+  COURT_APPEAL:       "Court Appeal",
+  NO_UPDATE:          "No Update",
+  DEFERRED:           "Deferred",
+};
+
+let allData = [];
+let historyCache = {};
+let sortCol = "lodgement_date";
+let sortDir = -1;
+let watchlistPans = new Set();
+let filterWatchlistOnly = false;
+let filterAlertsOnly = false;
+
+// ── API ───────────────────────────────────────
+
+async function sbFetch(path, params = {}) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${path}`);
+  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+  const r = await fetch(url, {
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    }
+  });
+  if (!r.ok) throw new Error(`Supabase error: ${r.status}`);
+  return r.json();
+}
+
+async function loadData() {
+  if (!SUPABASE_URL.startsWith("https://") || SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY") {
+    document.getElementById("config-banner").style.display = "block";
+    document.getElementById("loading").style.display = "none";
+    return;
+  }
+
+  document.getElementById("loading").style.display = "flex";
+  document.getElementById("table").style.display = "none";
+  document.getElementById("empty").style.display = "none";
+
+  try {
+    const [das, watchlist] = await Promise.all([
+      sbFetch("development_applications", {
+        select: "*",
+        limit: 2000,
+        order: "lodgement_date.desc",
+      }),
+      sbFetch("watchlist", { select: "pan,interest,notes" }),
+    ]);
+
+    allData = das;
+    watchlistPans = new Set(watchlist.map(w => w.pan));
+
+    // Populate council filter
+    const councils = [...new Set(das.map(d => d.council_name).filter(Boolean))].sort();
+    const councilSel = document.getElementById("f-council");
+    councilSel.innerHTML = '<option value="">All councils</option>';
+    councils.forEach(c => {
+      const o = document.createElement("option");
+      o.value = o.textContent = c;
+      councilSel.appendChild(o);
+    });
+
+    updateStats(das);
+    render();
+
+    const latest = das.reduce((m, d) => d.last_api_seen_at > m ? d.last_api_seen_at : m, "");
+    document.getElementById("last-updated").textContent =
+      latest ? `Last sync: ${new Date(latest).toLocaleString("en-AU")}` : "No data yet";
+
+  } catch(e) {
+    document.getElementById("loading").innerHTML =
+      `<div style="color:var(--crit)">Error loading data: ${e.message}</div>`;
+    console.error(e);
+    return;
+  }
+}
+
+// ── Stats ─────────────────────────────────────
+
+function updateStats(data) {
+  const critical = data.filter(d => (d.alert_flags || []).some(f =>
+    ["STALLED_INFO","REJECTED","COURT_APPEAL"].includes(f))).length;
+  const warning = data.filter(d => (d.alert_flags || []).some(f =>
+    ["STALLED_ASSESSMENT","LONG_EXHIBITING","WITHDRAWN","DEFERRED"].includes(f))).length;
+  const active = data.filter(d =>
+    !["Determined","Rejected","Withdrawn"].includes(d.application_status)).length;
+  const totalVal = data.reduce((s,d) => s + (d.cost_of_development || 0), 0);
+
+  document.getElementById("s-critical").textContent = critical;
+  document.getElementById("s-warning").textContent = warning;
+  document.getElementById("s-total").textContent = data.length;
+  document.getElementById("s-active").textContent = active;
+  document.getElementById("s-watchlist").textContent = watchlistPans.size;
+  document.getElementById("s-value").textContent = (totalVal / 1e9).toFixed(1);
+}
+
+// ── Render ────────────────────────────────────
+
+function statusClass(s) {
+  if (!s) return "other";
+  return s.replace(/\s+/g, "-").replace(/[^a-zA-Z-]/g, "");
+}
+
+function fmtCost(v) {
+  if (!v) return "—";
+  if (v >= 1e9) return `$${(v/1e9).toFixed(2)}B`;
+  if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
+  return `$${(v/1e3).toFixed(0)}K`;
+}
+
+function fmtDate(s) {
+  if (!s) return "—";
+  return new Date(s).toLocaleDateString("en-AU", {day:"2-digit",month:"short",year:"2-digit"});
+}
+
+function getFiltered() {
+  const status = document.getElementById("f-status").value;
+  const confidence = document.getElementById("f-confidence").value;
+  const council = document.getElementById("f-council").value;
+  const flag = document.getElementById("f-flag").value;
+  const search = document.getElementById("f-search").value.toLowerCase();
+
+  return allData.filter(d => {
+    if (status && d.application_status !== status) return false;
+    if (confidence && d.pbsa_confidence !== confidence) return false;
+    if (council && d.council_name !== council) return false;
+    if (flag && !(d.alert_flags || []).includes(flag)) return false;
+    if (filterWatchlistOnly && !watchlistPans.has(d.planning_portal_number)) return false;
+    if (filterAlertsOnly && !(d.alert_flags || []).length) return false;
+    if (search) {
+      const blob = [d.full_address, d.council_name, d.planning_portal_number,
+        d.development_type, d.development_description].join(" ").toLowerCase();
+      if (!blob.includes(search)) return false;
+    }
+    return true;
+  }).sort((a, b) => {
+    const av = a[sortCol] ?? "";
+    const bv = b[sortCol] ?? "";
+    if (typeof av === "number") return (av - bv) * sortDir;
+    return String(av).localeCompare(String(bv)) * sortDir;
+  });
+}
+
+function render() {
+  const filtered = getFiltered();
+  const tbody = document.getElementById("tbody");
+  document.getElementById("loading").style.display = "none";
+
+  if (!filtered.length) {
+    document.getElementById("table").style.display = "none";
+    document.getElementById("empty").style.display = "block";
+    return;
+  }
+
+  document.getElementById("empty").style.display = "none";
+  document.getElementById("table").style.display = "table";
+
+  tbody.innerHTML = filtered.map(d => {
+    const flags = (d.alert_flags || []);
+    const flagHtml = flags.map(f =>
+      `<span class="flag flag-${f}">${FLAG_LABELS[f] || f}</span>`
+    ).join("");
+    const isWatchlisted = watchlistPans.has(d.planning_portal_number);
+
+    return `<tr onclick="openPanel('${d.planning_portal_number}')">
+      <td style="color:var(--accent2);font-size:11px">${isWatchlisted ? "★ " : ""}${d.planning_portal_number || "—"}</td>
+      <td class="wrap">${d.full_address || "—"}</td>
+      <td style="color:var(--muted);font-size:11px">${(d.council_name || "—").replace(" Council","").replace(" City","")}</td>
+      <td><span class="status-pill status-${statusClass(d.application_status)}">${d.application_status || "—"}</span></td>
+      <td style="min-width:160px">${flagHtml || '<span style="color:var(--muted)">—</span>'}</td>
+      <td><span class="conf conf-${d.pbsa_confidence}">${d.pbsa_confidence || "—"}</span></td>
+      <td style="text-align:right">${fmtCost(d.cost_of_development)}</td>
+      <td style="text-align:center;color:var(--muted)">${d.number_of_storeys || "—"}</td>
+      <td style="color:var(--muted)">${fmtDate(d.lodgement_date)}</td>
+      <td style="text-align:right;color:${(d.days_in_current_status||0) > 90 ? 'var(--crit)' : (d.days_in_current_status||0) > 30 ? 'var(--warn)' : 'var(--muted)'}">${d.days_in_current_status != null ? d.days_in_current_status + "d" : "—"}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ── Panel ─────────────────────────────────────
+
+async function openPanel(pan) {
+  const d = allData.find(x => x.planning_portal_number === pan);
+  if (!d) return;
+
+  // Load history if not cached
+  if (!historyCache[pan]) {
+    try {
+      historyCache[pan] = await sbFetch("status_history", {
+        pan: `eq.${pan}`,
+        select: "*",
+        order: "changed_at.desc",
+      });
+    } catch(e) { historyCache[pan] = []; }
+  }
+
+  const history = historyCache[pan];
+  const isWatchlisted = watchlistPans.has(pan);
+  const flags = (d.alert_flags || []);
+
+  const portalLink = `https://www.planningportal.nsw.gov.au/planning-portal/da?applicationNumber=${pan}`;
+
+  document.getElementById("panel-content").innerHTML = `
+    <div class="panel-pan">${pan}</div>
+    <div class="panel-address">${d.full_address || "Address unknown"}</div>
+    <div class="panel-council">${d.council_name || ""} &mdash; ${d.suburb || ""} ${d.postcode || ""}</div>
+
+    ${flags.length ? `<div style="margin-bottom:16px">${flags.map(f=>`<span class="flag flag-${f}">${FLAG_LABELS[f]||f}</span>`).join(" ")}</div>` : ""}
+
+    <div class="panel-grid">
+      <div class="panel-field">
+        <div class="panel-field-label">Status</div>
+        <div class="panel-field-value">
+          <span class="status-pill status-${statusClass(d.application_status)}">${d.application_status || "—"}</span>
+        </div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">PBSA Confidence</div>
+        <div class="panel-field-value"><span class="conf conf-${d.pbsa_confidence}">${d.pbsa_confidence || "—"}</span></div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">Dev. Cost</div>
+        <div class="panel-field-value">${fmtCost(d.cost_of_development)}</div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">Storeys / Dwellings</div>
+        <div class="panel-field-value">${d.number_of_storeys || "—"} / ${d.number_of_new_dwellings || "—"}</div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">Lodged</div>
+        <div class="panel-field-value">${fmtDate(d.lodgement_date)}</div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">Days in status</div>
+        <div class="panel-field-value">${d.days_in_current_status != null ? d.days_in_current_status + " days" : "—"}</div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">Determination Auth.</div>
+        <div class="panel-field-value" style="font-size:11px">${d.determination_authority || "—"}</div>
+      </div>
+      <div class="panel-field">
+        <div class="panel-field-label">Lot / Plan</div>
+        <div class="panel-field-value" style="font-size:11px">${d.lot || "—"} / ${d.plan_label || "—"}</div>
+      </div>
+    </div>
+
+    ${d.development_description ? `
+      <div class="panel-section-title">Development Description</div>
+      <div class="panel-desc">${d.development_description}</div>
+    ` : ""}
+
+    ${d.pbsa_match_reason ? `
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Match reason: ${d.pbsa_match_reason}</div>
+    ` : ""}
+
+    <div class="panel-section-title">Status History</div>
+    ${history.length ? history.map(h => `
+      <div class="history-row">
+        <div class="history-date">${fmtDate(h.changed_at)}</div>
+        <div class="history-change">
+          <span style="color:var(--muted)">${h.old_status || "—"}</span>
+          <span style="color:var(--muted)"> → </span>
+          <span style="color:var(--text)">${h.new_status}</span>
+          ${h.days_in_old_status ? `<span style="color:var(--muted);font-size:10px"> (${h.days_in_old_status}d in prev status)</span>` : ""}
+        </div>
+      </div>
+    `).join("") : '<div style="color:var(--muted);font-size:12px">No status changes recorded yet.</div>'}
+
+    <div class="panel-section-title">Your Notes</div>
+    <textarea class="notes-input" id="panel-notes" placeholder="Add notes about this site…">${d.notes || ""}</textarea>
+
+    <button class="watchlist-btn ${isWatchlisted ? "on-watchlist" : ""}" onclick="toggleWatchlist('${pan}')">
+      ${isWatchlisted ? "★ On watchlist" : "☆ Add to watchlist"}
+    </button>
+
+    <a class="panel-link" href="${portalLink}" target="_blank">↗ View on NSW Planning Portal</a>
+  `;
+
+  document.getElementById("overlay").classList.add("open");
+  document.getElementById("panel").classList.add("open");
+}
+
+function closePanel() {
+  document.getElementById("overlay").classList.remove("open");
+  document.getElementById("panel").classList.remove("open");
+}
+
+async function toggleWatchlist(pan) {
+  // For a read-only dashboard this just shows a message
+  // Full watchlist management requires Supabase service key (use fetcher script)
+  alert(`To add ${pan} to your watchlist, run:\n\npython fetcher/watchlist.py add ${pan}\n\n(See README for details)`);
+}
+
+// ── Sorting ───────────────────────────────────
+
+document.querySelectorAll("thead th[data-col]").forEach(th => {
+  th.addEventListener("click", () => {
+    const col = th.dataset.col;
+    if (sortCol === col) { sortDir *= -1; }
+    else { sortCol = col; sortDir = -1; }
+    document.querySelectorAll("thead th").forEach(t => t.classList.remove("sort-asc","sort-desc"));
+    th.classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
+    render();
+  });
+});
+
+// ── Filter listeners ──────────────────────────
+
+["f-status","f-confidence","f-council","f-flag"].forEach(id => {
+  document.getElementById(id).addEventListener("change", render);
+});
+
+document.getElementById("f-search").addEventListener("input", render);
+
+document.getElementById("f-watchlist-only").addEventListener("click", function() {
+  filterWatchlistOnly = !filterWatchlistOnly;
+  this.classList.toggle("active", filterWatchlistOnly);
+  render();
+});
+
+document.getElementById("f-alerts-only").addEventListener("click", function() {
+  filterAlertsOnly = !filterAlertsOnly;
+  this.classList.toggle("active", filterAlertsOnly);
+  render();
+});
+
+// ── Init ──────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
