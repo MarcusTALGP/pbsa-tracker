@@ -10,7 +10,7 @@
   :root {
     --bg:#0a0b0e; --surface:#111318; --border:#1e2128; --border2:#2a2f3a;
     --text:#e8eaf0; --muted:#6b7280; --accent:#4ade80; --accent2:#22d3ee;
-    --warn:#fb923c; --crit:#f87171;
+    --warn:#fb923c; --crit:#f87171; --purple:#c084fc;
     --mono:'DM Mono',monospace; --sans:'Syne',sans-serif;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -46,22 +46,19 @@
   tbody tr:hover { background:var(--surface); }
   td { padding:10px 16px; vertical-align:middle; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   td.wrap { white-space:normal; max-width:260px; line-height:1.4; }
-  .flag { display:inline-block; font-size:9px; font-weight:500; letter-spacing:0.06em; padding:2px 6px; border-radius:3px; margin:1px 1px; white-space:nowrap; }
-  .flag-STALLED_INFO,.flag-REJECTED,.flag-COURT_APPEAL { background:rgba(248,113,113,0.15); color:var(--crit); border:1px solid rgba(248,113,113,0.3); }
-  .flag-STALLED_ASSESSMENT,.flag-LONG_EXHIBITING,.flag-WITHDRAWN,.flag-DEFERRED { background:rgba(251,146,60,0.15); color:var(--warn); border:1px solid rgba(251,146,60,0.3); }
-  .flag-NO_UPDATE { background:rgba(107,114,128,0.15); color:var(--muted); border:1px solid rgba(107,114,128,0.3); }
   .conf { font-size:10px; padding:2px 6px; border-radius:3px; font-weight:500; }
   .conf-HIGH { background:rgba(74,222,128,0.12); color:var(--accent); }
   .conf-MEDIUM { background:rgba(34,211,238,0.12); color:var(--accent2); }
   .conf-LOW { background:rgba(107,114,128,0.12); color:var(--muted); }
   .status-pill { font-size:10px; padding:2px 8px; border-radius:20px; white-space:nowrap; }
-  .status-Determined { background:rgba(74,222,128,0.1); color:var(--accent); }
+  .status-Determined,.status-Approved { background:rgba(74,222,128,0.1); color:var(--accent); }
   .status-Under-Assessment { background:rgba(34,211,238,0.1); color:var(--accent2); }
   .status-On-Exhibition { background:rgba(251,146,60,0.1); color:var(--warn); }
-  .status-Additional-Information-Requested { background:rgba(248,113,113,0.1); color:var(--crit); }
+  .status-Additional-Information-Requested { background:rgba(251,146,60,0.12); color:var(--warn); }
   .status-Rejected,.status-Refused,.status-Declined { background:rgba(248,113,113,0.15); color:var(--crit); }
-  .status-Withdrawn { background:rgba(107,114,128,0.1); color:var(--muted); }
+  .status-Withdrawn { background:rgba(192,132,252,0.15); color:var(--purple); }
   .status-Pending-Court-Appeal { background:rgba(248,113,113,0.2); color:var(--crit); }
+  .status-Deferred-Commencement { background:rgba(251,146,60,0.12); color:var(--warn); }
   .status-other { background:rgba(107,114,128,0.1); color:var(--muted); }
   .panel-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:200; display:none; backdrop-filter:blur(2px); }
   .panel-overlay.open { display:block; }
@@ -101,15 +98,15 @@
 </header>
 
 <div class="config-banner" id="config-banner" style="display:none">
-  <strong>⚠ Setup required.</strong> Set your Supabase credentials at the top of the &lt;script&gt; tag:
-  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> — both in Supabase under Settings → API.
+  <strong>Setup required.</strong> Set your Supabase credentials at the top of the &lt;script&gt; tag:
+  <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> — both in Supabase under Settings, API.
 </div>
 
 <div class="stats-bar">
-  <div class="stat crit"><div class="stat-value" id="s-critical">—</div><div class="stat-label">Critical alerts</div></div>
-  <div class="stat warn"><div class="stat-value" id="s-warning">—</div><div class="stat-label">Warning alerts</div></div>
-  <div class="stat"><div class="stat-value" id="s-total">—</div><div class="stat-label">Total PBSA DAs</div></div>
-  <div class="stat ok"><div class="stat-value" id="s-active">—</div><div class="stat-label">Active (not determined)</div></div>
+  <div class="stat"><div class="stat-value" id="s-total">—</div><div class="stat-label">Total DAs</div></div>
+  <div class="stat ok"><div class="stat-value" id="s-active">—</div><div class="stat-label">Under Assessment</div></div>
+  <div class="stat crit"><div class="stat-value" id="s-rejected">—</div><div class="stat-label">Rejected / Refused</div></div>
+  <div class="stat"><div class="stat-value" id="s-withdrawn">—</div><div class="stat-label">Withdrawn</div></div>
   <div class="stat"><div class="stat-value" id="s-watchlist">—</div><div class="stat-label">On watchlist</div></div>
   <div class="stat"><div class="stat-value" id="s-value">—</div><div class="stat-label">Total dev value ($B)</div></div>
 </div>
@@ -124,9 +121,21 @@
       <option>On Exhibition</option>
       <option>Determined</option>
       <option>Rejected</option>
+      <option>Refused</option>
+      <option>Declined</option>
       <option>Withdrawn</option>
       <option>Pending Court Appeal</option>
       <option>Deferred Commencement</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Class</label>
+    <select id="f-class">
+      <option value="">All classes</option>
+      <option value="PBSA">PBSA</option>
+      <option value="CO_LIVING">Co-living</option>
+      <option value="BTR">BTR</option>
+      <option value="ADJACENT">Adjacent</option>
     </select>
   </div>
   <div class="filter-group">
@@ -138,16 +147,13 @@
     <select id="f-council"><option value="">All councils</option></select>
   </div>
   <div class="filter-group">
-    <label>Alert</label>
-    <select id="f-flag">
-      <option value="">Any</option>
-      <option value="STALLED_INFO">Stalled – Info Req.</option>
-      <option value="STALLED_ASSESSMENT">Stalled – Assessment</option>
-      <option value="LONG_EXHIBITING">Long Exhibition</option>
-      <option value="REJECTED">Rejected</option>
-      <option value="WITHDRAWN">Withdrawn</option>
-      <option value="COURT_APPEAL">Court Appeal</option>
-      <option value="NO_UPDATE">No Recent Update</option>
+    <label>Min years since lodged</label>
+    <select id="f-age">
+      <option value="0">Any age</option>
+      <option value="1">1+ years</option>
+      <option value="2">2+ years</option>
+      <option value="3">3+ years</option>
+      <option value="5">5+ years</option>
     </select>
   </div>
   <div class="filter-group">
@@ -155,7 +161,6 @@
     <input type="text" id="f-search" placeholder="address, PAN, council…" style="width:200px">
   </div>
   <button class="btn" id="f-watchlist-only">★ Watchlist only</button>
-  <button class="btn" id="f-alerts-only">⚡ Alerts only</button>
   <button class="btn" id="btn-refresh" onclick="loadData()">↻ Refresh</button>
 </div>
 
@@ -168,19 +173,20 @@
         <th data-col="full_address">Address</th>
         <th data-col="council_name">Council</th>
         <th data-col="application_status">Status</th>
-        <th data-col="alert_flags">Alerts</th>
-        <th data-col="pbsa_confidence">PBSA</th>
+        <th data-col="asset_class">Class</th>
+        <th data-col="pbsa_confidence">Conf.</th>
         <th data-col="cost_of_development">Dev. Cost</th>
         <th data-col="number_of_storeys">Storeys</th>
+        <th data-col="number_of_new_dwellings">Dwellings</th>
         <th data-col="lodgement_date">Lodged</th>
-        <th data-col="days_in_current_status">Days in status</th>
+        <th data-col="days_in_current_status">Age</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
   <div id="empty" class="empty" style="display:none">
     <strong>No results</strong>
-    Try adjusting your filters, or run a sync if the database is empty.
+    Try adjusting your filters, or run a full sync if the database is empty.
   </div>
 </div>
 
@@ -191,18 +197,9 @@
 </div>
 
 <script>
-// ═══════════════════════════════════════════════
-//  CONFIGURE THESE TWO VALUES — Supabase → Settings → API
-// ═══════════════════════════════════════════════
+// CONFIGURE THESE TWO VALUES — Supabase, Settings, API
 const SUPABASE_URL      = "https://affuknzwjjxuenwcteyf.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_qR9jz-0qf37CxKPfnIlqaQ_r0okBfPJ";
-// ═══════════════════════════════════════════════
-
-const FLAG_LABELS = {
-  STALLED_INFO:"Stalled: Info Req.", STALLED_ASSESSMENT:"Stalled: Assessment",
-  LONG_EXHIBITING:"Long Exhibition", REJECTED:"Rejected", WITHDRAWN:"Withdrawn",
-  COURT_APPEAL:"Court Appeal", NO_UPDATE:"No Update", DEFERRED:"Deferred"
-};
 
 let allData = [];
 let historyCache = {};
@@ -210,11 +207,11 @@ let sortCol = "lodgement_date";
 let sortDir = -1;
 let watchlistPans = new Set();
 let filterWatchlistOnly = false;
-let filterAlertsOnly = false;
 
-async function sbFetch(path, params = {}) {
+async function sbFetch(path, params) {
+  params = params || {};
   const url = new URL(SUPABASE_URL + "/rest/v1/" + path);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+  Object.entries(params).forEach(function(kv){ url.searchParams.set(kv[0], kv[1]); });
   const r = await fetch(url, { headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY } });
   if (!r.ok) throw new Error("Supabase error: " + r.status);
   return r.json();
@@ -231,21 +228,23 @@ async function loadData() {
   document.getElementById("empty").style.display = "none";
 
   try {
-    const [das, watchlist] = await Promise.all([
+    const results = await Promise.all([
       sbFetch("development_applications", { select:"*", limit:5000, order:"lodgement_date.desc" }),
       sbFetch("watchlist", { select:"pan,interest,notes" })
     ]);
+    const das = results[0];
+    const watchlist = results[1];
     allData = das;
-    watchlistPans = new Set(watchlist.map(w => w.pan));
+    watchlistPans = new Set(watchlist.map(function(w){ return w.pan; }));
 
-    const councils = [...new Set(das.map(d => d.council_name).filter(Boolean))].sort();
+    const councils = [...new Set(das.map(function(d){ return d.council_name; }).filter(Boolean))].sort();
     const sel = document.getElementById("f-council");
     sel.innerHTML = '<option value="">All councils</option>';
-    councils.forEach(c => { const o = document.createElement("option"); o.value = o.textContent = c; sel.appendChild(o); });
+    councils.forEach(function(c){ const o = document.createElement("option"); o.value = o.textContent = c; sel.appendChild(o); });
 
     updateStats(das);
     render();
-    const latest = das.reduce((m,d) => (d.last_api_seen_at > m ? d.last_api_seen_at : m), "");
+    const latest = das.reduce(function(m,d){ return (d.last_api_seen_at > m ? d.last_api_seen_at : m); }, "");
     document.getElementById("last-updated").textContent = latest ? "Last sync: " + new Date(latest).toLocaleString("en-AU") : "No data yet";
   } catch(e) {
     document.getElementById("loading").innerHTML = '<div style="color:var(--crit)">Error loading data: ' + e.message + '</div>';
@@ -254,14 +253,14 @@ async function loadData() {
 }
 
 function updateStats(data) {
-  const critical = data.filter(d => (d.alert_flags||[]).some(f => ["STALLED_INFO","REJECTED","COURT_APPEAL"].includes(f))).length;
-  const warning = data.filter(d => (d.alert_flags||[]).some(f => ["STALLED_ASSESSMENT","LONG_EXHIBITING","WITHDRAWN","DEFERRED"].includes(f))).length;
-  const active = data.filter(d => !["Determined","Rejected","Withdrawn"].includes(d.application_status)).length;
-  const totalVal = data.reduce((s,d) => s + (d.cost_of_development||0), 0);
-  document.getElementById("s-critical").textContent = critical;
-  document.getElementById("s-warning").textContent = warning;
+  const rejected = data.filter(function(d){ return ["Rejected","Refused","Declined"].includes(d.application_status); }).length;
+  const withdrawn = data.filter(function(d){ return d.application_status === "Withdrawn"; }).length;
+  const active = data.filter(function(d){ return d.application_status === "Under Assessment"; }).length;
+  const totalVal = data.reduce(function(s,d){ return s + (d.cost_of_development||0); }, 0);
   document.getElementById("s-total").textContent = data.length;
   document.getElementById("s-active").textContent = active;
+  document.getElementById("s-rejected").textContent = rejected;
+  document.getElementById("s-withdrawn").textContent = withdrawn;
   document.getElementById("s-watchlist").textContent = watchlistPans.size;
   document.getElementById("s-value").textContent = (totalVal/1e9).toFixed(1);
 }
@@ -269,27 +268,32 @@ function updateStats(data) {
 function statusClass(s) { return s ? s.replace(/\s+/g,"-").replace(/[^a-zA-Z-]/g,"") : "other"; }
 function fmtCost(v) { if (!v) return "—"; if (v>=1e9) return "$"+(v/1e9).toFixed(2)+"B"; if (v>=1e6) return "$"+(v/1e6).toFixed(1)+"M"; return "$"+(v/1e3).toFixed(0)+"K"; }
 function fmtDate(s) { return s ? new Date(s).toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"2-digit"}) : "—"; }
+function fmtAge(days) { if (days == null) return "—"; if (days > 365) return (days/365).toFixed(1)+"y"; return days+"d"; }
+function classLabel(c) { return c ? c.replace("_"," ") : "—"; }
+function classConf(c) { return c==="PBSA"?"HIGH":c==="CO_LIVING"?"MEDIUM":"LOW"; }
 
 function getFiltered() {
   const status = document.getElementById("f-status").value;
   const confidence = document.getElementById("f-confidence").value;
+  const assetClass = document.getElementById("f-class").value;
   const council = document.getElementById("f-council").value;
-  const flag = document.getElementById("f-flag").value;
+  const minYears = parseFloat(document.getElementById("f-age").value) || 0;
   const search = document.getElementById("f-search").value.toLowerCase();
-  return allData.filter(d => {
+  return allData.filter(function(d){
     if (status && d.application_status !== status) return false;
     if (confidence && d.pbsa_confidence !== confidence) return false;
+    if (assetClass && d.asset_class !== assetClass) return false;
     if (council && d.council_name !== council) return false;
-    if (flag && !(d.alert_flags||[]).includes(flag)) return false;
+    if (minYears > 0 && (d.days_in_current_status||0) < minYears*365) return false;
     if (filterWatchlistOnly && !watchlistPans.has(d.planning_portal_number)) return false;
-    if (filterAlertsOnly && !(d.alert_flags||[]).length) return false;
     if (search) {
       const blob = [d.full_address,d.council_name,d.planning_portal_number,d.development_type].join(" ").toLowerCase();
       if (!blob.includes(search)) return false;
     }
     return true;
-  }).sort((a,b) => {
-    const av = a[sortCol] ?? "", bv = b[sortCol] ?? "";
+  }).sort(function(a,b){
+    const av = a[sortCol] != null ? a[sortCol] : "";
+    const bv = b[sortCol] != null ? b[sortCol] : "";
     if (typeof av === "number") return (av-bv)*sortDir;
     return String(av).localeCompare(String(bv))*sortDir;
   });
@@ -307,50 +311,43 @@ function render() {
   document.getElementById("empty").style.display = "none";
   document.getElementById("table").style.display = "table";
 
-  tbody.innerHTML = filtered.map(d => {
-    const flags = d.alert_flags || [];
-    const flagHtml = flags.map(f => '<span class="flag flag-'+f+'">'+(FLAG_LABELS[f]||f)+'</span>').join("");
+  tbody.innerHTML = filtered.map(function(d){
     const star = watchlistPans.has(d.planning_portal_number) ? "★ " : "";
     const enrichIcon = d.enriched_at ? "" : ' <span style="font-size:9px;color:var(--muted)">⏳</span>';
-    const daysVal = d.days_in_current_status;
-    const daysColor = (daysVal||0) > 90 ? "var(--crit)" : (daysVal||0) > 30 ? "var(--warn)" : "var(--muted)";
-    const daysText = daysVal != null ? daysVal + "d" : "—";
+    const age = d.days_in_current_status;
+    const ageColor = (age||0) > 730 ? "var(--crit)" : (age||0) > 365 ? "var(--warn)" : "var(--muted)";
     const council = (d.council_name||"—").replace(" Council","").replace(" City","");
-    return '<tr onclick="openPanel(\''+d.planning_portal_number+'\')">'
-      + '<td style="color:var(--accent2);font-size:11px">'+star+(d.planning_portal_number||"—")+'</td>'
-      + '<td class="wrap">'+(d.full_address||"—")+'</td>'
-      + '<td style="color:var(--muted);font-size:11px">'+council+'</td>'
-      + '<td><span class="status-pill status-'+statusClass(d.application_status)+'">'+(d.application_status||"—")+'</span></td>'
-      + '<td style="min-width:160px">'+(flagHtml||'<span style="color:var(--muted)">—</span>')+'</td>'
-      + '<td><span class="conf conf-'+d.pbsa_confidence+'">'+(d.pbsa_confidence||"—")+'</span>'+enrichIcon+'</td>'
-      + '<td style="text-align:right">'+fmtCost(d.cost_of_development)+'</td>'
-      + '<td style="text-align:center;color:var(--muted)">'+(d.number_of_storeys||"—")+'</td>'
-      + '<td style="color:var(--muted)">'+fmtDate(d.lodgement_date)+'</td>'
-      + '<td style="text-align:right;color:'+daysColor+'">'+daysText+'</td>'
+    return '<tr onclick="openPanel(\'' + d.planning_portal_number + '\')">'
+      + '<td style="color:var(--accent2);font-size:11px">' + star + (d.planning_portal_number||"—") + '</td>'
+      + '<td class="wrap">' + (d.full_address||"—") + '</td>'
+      + '<td style="color:var(--muted);font-size:11px">' + council + '</td>'
+      + '<td><span class="status-pill status-' + statusClass(d.application_status) + '">' + (d.application_status||"—") + '</span></td>'
+      + '<td><span class="conf conf-' + classConf(d.asset_class) + '">' + classLabel(d.asset_class) + '</span></td>'
+      + '<td><span class="conf conf-' + d.pbsa_confidence + '">' + (d.pbsa_confidence||"—") + '</span>' + enrichIcon + '</td>'
+      + '<td style="text-align:right">' + fmtCost(d.cost_of_development) + '</td>'
+      + '<td style="text-align:center;color:var(--muted)">' + (d.number_of_storeys||"—") + '</td>'
+      + '<td style="text-align:center;color:var(--muted)">' + (d.number_of_new_dwellings||"—") + '</td>'
+      + '<td style="color:var(--muted)">' + fmtDate(d.lodgement_date) + '</td>'
+      + '<td style="text-align:right;color:' + ageColor + '">' + fmtAge(age) + '</td>'
       + '</tr>';
   }).join("");
 }
 
 async function openPanel(pan) {
-  const d = allData.find(x => x.planning_portal_number === pan);
+  const d = allData.find(function(x){ return x.planning_portal_number === pan; });
   if (!d) return;
   if (!historyCache[pan]) {
     try { historyCache[pan] = await sbFetch("status_history", { pan:"eq."+pan, select:"*", order:"changed_at.desc" }); }
     catch(e) { historyCache[pan] = []; }
   }
   const history = historyCache[pan];
-  const isW = watchlistPans.has(pan);
-  const flags = d.alert_flags || [];
   const enriched = !!d.enriched_at;
-  const portalLink = "https://www.planningportal.nsw.gov.au/onlineDA?applicationNumber=" + pan;
+  const portalQuery = encodeURIComponent(pan + " " + (d.council_name || "") + " development application");
+  const portalLink = "https://www.google.com/search?q=" + portalQuery;
 
   const enrichBadge = enriched
-    ? '<span style="font-size:10px;color:var(--accent);margin-left:8px">✓ enriched</span>'
-    : '<span style="font-size:10px;color:var(--muted);margin-left:8px">⏳ pending</span>';
-
-  const flagsHtml = flags.length
-    ? '<div style="margin-bottom:16px">' + flags.map(f => '<span class="flag flag-'+f+'">'+(FLAG_LABELS[f]||f)+'</span>').join(" ") + '</div>'
-    : '';
+    ? '<span style="font-size:10px;color:var(--accent);margin-left:8px">enriched</span>'
+    : '<span style="font-size:10px;color:var(--muted);margin-left:8px">pending</span>';
 
   const costVal = d.cost_of_development ? fmtCost(d.cost_of_development) : (enriched ? "Not reported" : "—");
 
@@ -361,35 +358,40 @@ async function openPanel(pan) {
         : '');
 
   const reasonHtml = d.pbsa_match_reason
-    ? '<div style="margin-top:8px;font-size:11px;color:var(--muted)">Match reason: ' + d.pbsa_match_reason + '</div>'
+    ? '<div style="margin-top:8px;font-size:11px;color:var(--muted)">Classified as ' + classLabel(d.asset_class) + ': ' + d.pbsa_match_reason + '</div>'
     : '';
 
+  const ageText = d.days_in_current_status != null
+    ? (d.days_in_current_status > 365 ? (d.days_in_current_status/365).toFixed(1)+" years" : d.days_in_current_status+" days")
+    : "—";
+
   const historyHtml = history.length
-    ? history.map(h => '<div class="history-row"><div class="history-date">'+fmtDate(h.changed_at)+'</div>'
-        + '<div class="history-change"><span style="color:var(--muted)">'+(h.old_status||"—")+'</span>'
-        + '<span style="color:var(--muted)"> → </span><span style="color:var(--text)">'+h.new_status+'</span></div></div>').join("")
+    ? history.map(function(h){ return '<div class="history-row"><div class="history-date">' + fmtDate(h.changed_at) + '</div>'
+        + '<div class="history-change"><span style="color:var(--muted)">' + (h.old_status||"—") + '</span>'
+        + '<span style="color:var(--muted)"> to </span><span style="color:var(--text)">' + h.new_status + '</span></div></div>'; }).join("")
     : '<div style="color:var(--muted);font-size:12px">No status changes recorded yet.</div>';
 
   document.getElementById("panel-content").innerHTML =
-      '<div class="panel-pan">'+pan+enrichBadge+'</div>'
-    + '<div class="panel-address">'+(d.full_address||"Address unknown")+'</div>'
-    + '<div class="panel-council">'+(d.council_name||"")+' &mdash; '+(d.suburb||"")+' '+(d.postcode||"")+'</div>'
-    + flagsHtml
+      '<div class="panel-pan">' + pan + enrichBadge + '</div>'
+    + '<div class="panel-address">' + (d.full_address||"Address unknown") + '</div>'
+    + '<div class="panel-council">' + (d.council_name||"") + ' &mdash; ' + (d.suburb||"") + ' ' + (d.postcode||"") + '</div>'
     + '<div class="panel-grid">'
-    +   '<div class="panel-field"><div class="panel-field-label">Status</div><div class="panel-field-value"><span class="status-pill status-'+statusClass(d.application_status)+'">'+(d.application_status||"—")+'</span></div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">PBSA Confidence</div><div class="panel-field-value"><span class="conf conf-'+d.pbsa_confidence+'">'+(d.pbsa_confidence||"—")+'</span></div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">Dev. Cost</div><div class="panel-field-value">'+costVal+'</div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">Storeys / Dwellings</div><div class="panel-field-value">'+(d.number_of_storeys||"—")+' / '+(d.number_of_new_dwellings||"—")+'</div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">Lodged</div><div class="panel-field-value">'+fmtDate(d.lodgement_date)+'</div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">Days in status</div><div class="panel-field-value">'+(d.days_in_current_status != null ? d.days_in_current_status+" days" : "—")+'</div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">Determination Auth.</div><div class="panel-field-value" style="font-size:11px">'+(d.determination_authority||"—")+'</div></div>'
-    +   '<div class="panel-field"><div class="panel-field-label">Lot / Plan</div><div class="panel-field-value" style="font-size:11px">'+(d.lot||"—")+' / '+(d.plan_label||"—")+'</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Status</div><div class="panel-field-value"><span class="status-pill status-' + statusClass(d.application_status) + '">' + (d.application_status||"—") + '</span></div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Asset Class</div><div class="panel-field-value"><span class="conf conf-' + classConf(d.asset_class) + '">' + classLabel(d.asset_class) + '</span></div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Confidence</div><div class="panel-field-value"><span class="conf conf-' + d.pbsa_confidence + '">' + (d.pbsa_confidence||"—") + '</span></div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Dev. Cost</div><div class="panel-field-value">' + costVal + '</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Storeys / Dwellings</div><div class="panel-field-value">' + (d.number_of_storeys||"—") + ' / ' + (d.number_of_new_dwellings||"—") + '</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Lodged</div><div class="panel-field-value">' + fmtDate(d.lodgement_date) + '</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Time since lodged</div><div class="panel-field-value">' + ageText + '</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Determination Auth.</div><div class="panel-field-value" style="font-size:11px">' + (d.determination_authority||"—") + '</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Determined</div><div class="panel-field-value">' + fmtDate(d.determination_date) + '</div></div>'
+    +   '<div class="panel-field"><div class="panel-field-label">Lot / Plan</div><div class="panel-field-value" style="font-size:11px">' + (d.lot||"—") + ' / ' + (d.plan_label||"—") + '</div></div>'
     + '</div>'
     + descHtml
     + reasonHtml
     + '<div class="panel-section-title">Status History</div>'
     + historyHtml
-    + '<a class="panel-link" href="'+portalLink+'" target="_blank">↗ View on NSW Planning Portal</a>';
+    + '<a class="panel-link" href="' + portalLink + '" target="_blank">Find DA on council tracker / portal</a>';
 
   document.getElementById("overlay").classList.add("open");
   document.getElementById("panel").classList.add("open");
@@ -400,19 +402,18 @@ function closePanel() {
   document.getElementById("panel").classList.remove("open");
 }
 
-document.querySelectorAll("thead th[data-col]").forEach(th => {
-  th.addEventListener("click", () => {
+document.querySelectorAll("thead th[data-col]").forEach(function(th){
+  th.addEventListener("click", function(){
     const col = th.dataset.col;
     if (sortCol === col) sortDir *= -1; else { sortCol = col; sortDir = -1; }
-    document.querySelectorAll("thead th").forEach(t => t.classList.remove("sort-asc","sort-desc"));
+    document.querySelectorAll("thead th").forEach(function(t){ t.classList.remove("sort-asc","sort-desc"); });
     th.classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
     render();
   });
 });
-["f-status","f-confidence","f-council","f-flag"].forEach(id => document.getElementById(id).addEventListener("change", render));
+["f-status","f-confidence","f-class","f-council","f-age"].forEach(function(id){ document.getElementById(id).addEventListener("change", render); });
 document.getElementById("f-search").addEventListener("input", render);
-document.getElementById("f-watchlist-only").addEventListener("click", function() { filterWatchlistOnly = !filterWatchlistOnly; this.classList.toggle("active", filterWatchlistOnly); render(); });
-document.getElementById("f-alerts-only").addEventListener("click", function() { filterAlertsOnly = !filterAlertsOnly; this.classList.toggle("active", filterAlertsOnly); render(); });
+document.getElementById("f-watchlist-only").addEventListener("click", function(){ filterWatchlistOnly = !filterWatchlistOnly; this.classList.toggle("active", filterWatchlistOnly); render(); });
 
 loadData();
 </script>
