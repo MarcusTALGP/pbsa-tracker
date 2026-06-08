@@ -17,12 +17,28 @@ PAGE_SIZE     = 100
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
 SUPABASE_KEY  = os.environ["SUPABASE_KEY"]
 
-PBSA_HIGH_TYPES   = {"boarding house","co-living","co-living housing","hostel"}
-PBSA_MEDIUM_TYPES = {"serviced apartment"}
-PBSA_LARGE_TYPES  = {"residential flat building","mixed use development","shop top housing","erection of a new structure"}
-PBSA_KEYWORDS     = ["student","pbsa","co-living","hostel","serviced apartment","boarding"]
+# ── Asset class classification ────────────────────────────────────────────────
+# Each DA gets tagged with an asset_class: PBSA | CO_LIVING | BTR | ADJACENT
+# Strongest signal wins. Confidence (HIGH/MEDIUM/LOW) is scored within each class.
+
+PBSA_KEYWORDS = ["student accommodation","student housing","student residence","pbsa",
+                 "purpose built student","purpose-built student","university accommodation",
+                 "iglu","scape","unilodge","urbanest","student living"]
+
+COLIVING_TYPES    = {"co-living","co-living housing"}
+COLIVING_KEYWORDS = ["co-living","coliving","co living"]
+
+BTR_KEYWORDS = ["build to rent","build-to-rent"," btr ","build to rent housing"]
+
+BOARDING_TYPES = {"boarding house","hostel"}
+
+LARGE_RES_TYPES = {"residential flat building","mixed use development",
+                   "shop top housing","erection of a new structure"}
+
+ALL_CANDIDATE_TYPES = COLIVING_TYPES | BOARDING_TYPES | LARGE_RES_TYPES | {"serviced apartment"}
+ALL_KEYWORDS = PBSA_KEYWORDS + COLIVING_KEYWORDS + BTR_KEYWORDS + ["boarding","hostel","serviced apartment"]
+
 MIN_COST=5_000_000; MIN_ST=5; MIN_DW=20
-STALL_INFO=30; STALL_ASSESS=90; LONG_EXHIBIT=60; NO_UPD=60
 
 def sb_h(): return {"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","Prefer":"return=representation"}
 def sb_get(t,p=None): r=requests.get(f"{SUPABASE_URL}/rest/v1/{t}",headers=sb_h(),params=p or {},timeout=30); r.raise_for_status(); return r.json()
@@ -53,31 +69,61 @@ def fetch_period(d_from, d_to):
         for app in apps:
             types=[dt.get("DevelopmentType","").lower() for dt in app.get("DevelopmentType",[])]
             ts=" ".join(types)
-            if any(t in PBSA_HIGH_TYPES|PBSA_MEDIUM_TYPES|PBSA_LARGE_TYPES for t in types) or any(k in ts for k in PBSA_KEYWORDS):
+            if any(t in ALL_CANDIDATE_TYPES for t in types) or any(k in ts for k in ALL_KEYWORDS):
                 found.append(app)
         if page>=data.get("TotalPages",1): break
         page+=1; time.sleep(0.4)
     log.info(f"    PBSA candidates: {len(found)}")
     return found
 
-def score_pbsa(app):
+def classify(app):
+    """
+    Returns (asset_class, confidence, reason).
+    asset_class: PBSA | CO_LIVING | BTR | ADJACENT
+    confidence:  HIGH | MEDIUM | LOW
+    Strongest signal wins. Scale (cost/storeys/dwellings) refines confidence.
+    """
     types=[dt.get("DevelopmentType","").lower() for dt in app.get("DevelopmentType",[])]
     ts=" ".join(types)
     cost=float(app.get("CostOfDevelopment") or 0)
     st=int(app.get("NumberOfStoreys") or 0)
     dw=int(app.get("NumberOfNewDwellings") or 0)
     large = cost>=MIN_COST or st>=MIN_ST or dw>=MIN_DW
-    for t in types:
-        if t in PBSA_HIGH_TYPES:
-            if st>0 and st<3 and dw>0 and dw<10: return "LOW",f"small {t}"
-            return ("HIGH" if large else "MEDIUM"), f"dev type: {t}"
-    for t in types:
-        if t in PBSA_MEDIUM_TYPES: return "MEDIUM",f"dev type: {t}"
+    tiny  = (st>0 and st<3) and (dw>0 and dw<10)
+
+    # 1. PBSA — explicit student keywords are the strongest signal
     for k in PBSA_KEYWORDS:
-        if k in ts: return "HIGH",f"keyword: {k}"
-    if any(t in PBSA_LARGE_TYPES for t in types) and large:
-        return "LOW",f"large residential (${cost:,.0f}, {st}st, {dw}dw)"
-    return "LOW","matched type, small scale"
+        if k in ts:
+            return "PBSA", ("HIGH" if large or not tiny else "MEDIUM"), f"student keyword: {k}"
+
+    # 2. CO-LIVING — explicit co-living type or keyword
+    if any(t in COLIVING_TYPES for t in types) or any(k in ts for k in COLIVING_KEYWORDS):
+        if tiny: return "CO_LIVING","LOW",f"small co-living ({st}st, {dw}dw)"
+        return "CO_LIVING", ("HIGH" if large else "MEDIUM"), "co-living development"
+
+    # 3. BTR — explicit build-to-rent keyword
+    if any(k in ts for k in BTR_KEYWORDS):
+        return "BTR", ("HIGH" if large else "MEDIUM"), "build-to-rent development"
+
+    # 4. Boarding house / hostel — classic PBSA-adjacent. Could be real PBSA at scale.
+    for t in types:
+        if t in BOARDING_TYPES:
+            if tiny:
+                return "ADJACENT","LOW",f"small {t} ({st}st, {dw}dw) — likely not PBSA"
+            if large:
+                # Large boarding house is very likely de-facto student/managed accommodation
+                return "PBSA","MEDIUM",f"large {t} (${cost:,.0f}, {st}st, {dw}dw)"
+            return "ADJACENT","MEDIUM",f"{t}"
+
+    # 5. Serviced apartment
+    if "serviced apartment" in ts:
+        return "ADJACENT", ("MEDIUM" if large else "LOW"), "serviced apartment"
+
+    # 6. Large residential pulled in as candidate — flag as ADJACENT for manual review
+    if any(t in LARGE_RES_TYPES for t in types) and large:
+        return "ADJACENT","LOW",f"large residential — review (${cost:,.0f}, {st}st, {dw}dw)"
+
+    return "ADJACENT","LOW","matched candidate type, small scale"
 
 def pdate(v):
     if not v: return None
@@ -87,7 +133,7 @@ def pdate(v):
         except: pass
     return None
 
-def map_rec(app, conf, reason):
+def map_rec(app, asset_class, conf, reason):
     loc=(app.get("Location") or [{}])[0]
     lot=(loc.get("Lot") or [{}])[0]
     council=app.get("Council",{})
@@ -97,6 +143,12 @@ def map_rec(app, conf, reason):
         try: days=(date.today()-date.fromisoformat(lodge)).days
         except: pass
     dev_types=", ".join(dt.get("DevelopmentType","") for dt in app.get("DevelopmentType",[]))
+    # Dormancy: how long since the DA last had any recorded activity
+    last_updated = pdate(app.get("DateLastUpdated"))
+    dormant_days = None
+    if last_updated:
+        try: dormant_days=(date.today()-date.fromisoformat(last_updated)).days
+        except: pass
     return {
         "planning_portal_number":    app.get("PlanningPortalApplicationNumber","").strip(),
         "council_application_number":app.get("CouncilApplicationNumber"),
@@ -125,31 +177,21 @@ def map_rec(app, conf, reason):
         "longitude":                 loc.get("X"),
         "latitude":                  loc.get("Y"),
         "pbsa_confidence":           conf,
+        "asset_class":               asset_class,
         "pbsa_match_reason":         reason,
         "enriched_at":               datetime.utcnow().isoformat(),
         "last_updated_at":           datetime.utcnow().isoformat(),
         "last_api_seen_at":          datetime.utcnow().isoformat(),
         "days_in_current_status":    days,
+        "date_last_updated":         last_updated,
+        "dormant_days":              dormant_days,
         "alert_flags":               [],
     }
 
-def flags(rec, existing=None):
-    f=[]; s=rec.get("application_status",""); d=rec.get("days_in_current_status") or 0
-    if s=="Additional Information Requested" and d>=STALL_INFO: f.append("STALLED_INFO")
-    if s=="Under Assessment" and d>=STALL_ASSESS: f.append("STALLED_ASSESSMENT")
-    if s=="On Exhibition" and d>=LONG_EXHIBIT: f.append("LONG_EXHIBITING")
-    if s in ("Rejected","Refused","Declined"): f.append("REJECTED")
-    if s=="Withdrawn": f.append("WITHDRAWN")
-    if s=="Pending Court Appeal": f.append("COURT_APPEAL")
-    if s=="Deferred Commencement": f.append("DEFERRED")
-    if existing and s not in ("Determined","Rejected","Withdrawn","Approved"):
-        ls=existing.get("last_api_seen_at")
-        if ls:
-            try:
-                ld=datetime.fromisoformat(ls.replace("Z","+00:00")).date()
-                if (date.today()-ld).days>=NO_UPD: f.append("NO_UPDATE")
-            except: pass
-    return f
+# No editorial flags. The dashboard filters on raw factual fields:
+#   application_status (Rejected / Withdrawn / Under Assessment / etc.)
+#   days_in_current_status (days since lodgement)
+# You make your own call from the raw data.
 
 def main():
     log.info("=== PBSA Fetcher (OnlineDA API) ===")
@@ -181,13 +223,16 @@ def main():
 
     records=[]
     for pan,app in seen.items():
-        c,r=score_pbsa(app)
-        rec=map_rec(app,c,r)
+        ac,c,r=classify(app)
+        rec=map_rec(app,ac,c,r)
         if rec["planning_portal_number"]: records.append(rec)
 
     hi=sum(1 for r in records if r["pbsa_confidence"]=="HIGH")
     me=sum(1 for r in records if r["pbsa_confidence"]=="MEDIUM")
     lo=sum(1 for r in records if r["pbsa_confidence"]=="LOW")
+    by_class={}
+    for r in records: by_class[r["asset_class"]]=by_class.get(r["asset_class"],0)+1
+    log.info(f"By class: {by_class}")
     log.info(f"Scored: HIGH={hi} MEDIUM={me} LOW={lo}")
 
     pans=[r["planning_portal_number"] for r in records]
@@ -206,17 +251,15 @@ def main():
             log.info(f"Status change: {pan} {old['application_status']} → {rec['application_status']}")
     if history: sb_insert("status_history",history); log.info(f"{len(history)} status changes")
 
-    for rec in records:
-        rec["alert_flags"]=flags(rec,existing.get(rec["planning_portal_number"]))
-
     total=0
     for i in range(0,len(records),200):
         sb_upsert("development_applications",records[i:i+200],"planning_portal_number")
         total+=len(records[i:i+200]); log.info(f"Upserted {total}/{len(records)}")
 
-    fl=[r for r in records if r["alert_flags"]]
-    log.info(f"=== Done: {len(records)} DAs | {len(history)} changes | {len(fl)} alerts ===")
-    for r in fl[:10]:
-        log.info(f"  {r['planning_portal_number']} | {r['application_status']} | {r['alert_flags']} | {r['full_address']}")
+    # Summary by status — factual, no editorial labels
+    by_status={}
+    for r in records: by_status[r["application_status"]]=by_status.get(r["application_status"],0)+1
+    log.info(f"=== Done: {len(records)} DAs | {len(history)} status changes ===")
+    log.info(f"By status: {by_status}")
 
 if __name__=="__main__": main()
