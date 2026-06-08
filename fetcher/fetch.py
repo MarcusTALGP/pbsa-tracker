@@ -72,7 +72,7 @@ def fetch_period(d_from, d_to):
             if any(t in ALL_CANDIDATE_TYPES for t in types) or any(k in ts for k in ALL_KEYWORDS):
                 found.append(app)
         if page>=data.get("TotalPages",1): break
-        page+=1; time.sleep(0.4)
+        page+=1; time.sleep(0.1)
     log.info(f"    PBSA candidates: {len(found)}")
     return found
 
