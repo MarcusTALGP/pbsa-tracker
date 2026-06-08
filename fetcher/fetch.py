@@ -94,7 +94,7 @@ def classify(app):
     # 1. PBSA — explicit student keywords are the strongest signal
     for k in PBSA_KEYWORDS:
         if k in ts:
-            return "PBSA", ("HIGH" if large or not tiny else "MEDIUM"), f"student keyword: {k}"
+            return "PBSA","HIGH",f"student keyword: {k}"
 
     # 2. CO-LIVING — explicit co-living type or keyword
     if any(t in COLIVING_TYPES for t in types) or any(k in ts for k in COLIVING_KEYWORDS):
@@ -105,17 +105,17 @@ def classify(app):
     if any(k in ts for k in BTR_KEYWORDS):
         return "BTR", ("HIGH" if large else "MEDIUM"), "build-to-rent development"
 
-    # 4. Boarding house / hostel — classic PBSA-adjacent. Could be real PBSA at scale.
+    # 4. Boarding house / hostel — the classic PBSA type in NSW planning.
+    #    These ARE student/managed accommodation. Tag as PBSA, scale sets confidence.
     for t in types:
         if t in BOARDING_TYPES:
-            if tiny:
-                return "ADJACENT","LOW",f"small {t} ({st}st, {dw}dw) — likely not PBSA"
             if large:
-                # Large boarding house is very likely de-facto student/managed accommodation
-                return "PBSA","MEDIUM",f"large {t} (${cost:,.0f}, {st}st, {dw}dw)"
-            return "ADJACENT","MEDIUM",f"{t}"
+                return "PBSA","HIGH",f"large {t} (${cost:,.0f}, {st}st, {dw}dw)"
+            if tiny:
+                return "PBSA","LOW",f"small {t} ({st}st, {dw}dw)"
+            return "PBSA","MEDIUM",f"{t}"
 
-    # 5. Serviced apartment
+    # 5. Serviced apartment — PBSA-adjacent
     if "serviced apartment" in ts:
         return "ADJACENT", ("MEDIUM" if large else "LOW"), "serviced apartment"
 
